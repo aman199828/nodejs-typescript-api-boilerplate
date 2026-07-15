@@ -1,0 +1,281 @@
+// ============================================
+// CHAT MODULE - PRISMA SCHEMA (REFERENCE ONLY)
+// ============================================
+//
+// ⚠️  IMPORTANT: This file is for REFERENCE ONLY
+//
+// This schema file documents the chat models that need to be added to your
+// main Prisma schema at `prisma/schema.prisma`.
+//
+// DO NOT use this file to generate a Prisma client. Instead:
+// 1. Copy the models below into your main `prisma/schema.prisma`
+// 2. Add the User model extensions (see comments below)
+// 3. Run `npx prisma generate` from the project root
+// 4. Run `npx prisma migrate dev` to create the tables
+//
+// See: src/modules/chat/README.md for integration instructions
+//
+// ============================================
+
+// ============================================
+// USER MODEL STUB (for relations only)
+// This is a minimal representation of the User model
+// from the main schema, used only for type-safe relations.
+// The actual User table is managed by the main schema.
+// ============================================
+
+model User {
+  id               Int            @id @map("id")
+  uuid             String?        @unique @map("uuid") @db.Uuid
+  
+  // Chat privacy settings (these fields should exist in the main User model)
+  showOnlineStatus Boolean        @default(true) @map("show_online_status")
+  showLastSeen     Boolean        @default(true) @map("show_last_seen")
+  showReadReceipts Boolean        @default(true) @map("show_read_receipts")
+  allowMessageRequests Boolean    @default(true) @map("allow_message_requests")
+  messageRequestPrivacy String    @default("everyone") @map("message_request_privacy") @db.VarChar(20)
+  
+  // Chat relations
+  createdConversations Conversation[] @relation("ConversationCreator")
+  conversationParticipants ConversationParticipant[] @relation("ConversationParticipants")
+  sentMessages      Message[]       @relation("MessageSender")
+  readMessages      Message[]        @relation("MessageReadBy")
+  messageReadReceipts MessageReadReceipt[] @relation("MessageReadReceipts")
+  messageRequestsSent MessageRequest[] @relation("MessageRequestSender")
+  messageRequestsReceived MessageRequest[] @relation("MessageRequestRecipient")
+  messageReactions  MessageReaction[] @relation("MessageReactions")
+  sharedUserMessages Message[] @relation("SharedUserMessages")
+  
+  @@map("tbl_user")
+}
+
+// ============================================
+// STORY MODEL STUB (for story replies)
+// ============================================
+
+model Story {
+  id        Int       @id @map("id")
+  replies   Message[] @relation("StoryReplies")
+  
+  @@map("stories")
+}
+
+// ============================================
+// POST MODEL STUB (for content sharing)
+// ============================================
+
+model Post {
+  id                  Int       @id @map("id")
+  sharedPostMessages  Message[] @relation("SharedPostMessages")
+  sharedClipMessages  Message[] @relation("SharedClipMessages")
+  
+  @@map("posts")
+}
+
+// Hashtag model intentionally removed (no hashtag sharing in this codebase)
+
+// ============================================
+// CHAT MODELS
+// ============================================
+
+model Conversation {
+  id              Int       @id @default(autoincrement()) @map("id")
+  uuid            String    @unique @default(uuid()) @map("uuid") @db.Uuid // Public-facing identifier
+  type            Int       @default(1) @map("type") // 1=direct, 2=group
+  name            String?   @map("name") @db.VarChar(255) // Group chat name (null for direct chats)
+  description     String?   @map("description") @db.Text // Group chat description
+  image           String?   @map("image") @db.VarChar(500) // Group chat image
+  imageStorage    String?   @default("local") @map("image_storage") @db.VarChar(10) // "local" or "s3"
+  createdById     Int       @map("created_by_id") // Creator (for group chats) or first participant (for direct)
+  lastMessageId   Int?      @unique @map("last_message_id") // Unique for one-to-one relation
+  lastMessageAt   DateTime? @map("last_message_at") @db.Timestamp(0)
+  participantCount Int      @default(2) @map("participant_count") // Denormalized for performance
+  maxParticipants  Int?      @map("max_participants") // Max participants (null = unlimited, for group chats)
+  isActive        Boolean   @default(true) @map("is_active")
+  version         Int       @default(1) @map("version") // Optimistic locking
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamp(0)
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamp(0) // Soft delete
+  
+  // Relations
+  creator         User      @relation("ConversationCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  lastMessage     Message?  @relation("ConversationLastMessage", fields: [lastMessageId], references: [id], onDelete: SetNull)
+  participants    ConversationParticipant[]
+  messages        Message[] @relation("ConversationMessages")
+  messageRequests MessageRequest[]
+  
+  // Optimized indexes for common queries
+  @@index([type])
+  @@index([createdById])
+  @@index([isActive])
+  @@index([lastMessageAt(sort: Desc)])
+  @@index([type, lastMessageAt(sort: Desc)])
+  @@index([deletedAt])
+  @@index([uuid]) // UUID lookup
+  @@map("conversations")
+}
+
+model ConversationParticipant {
+  id              Int       @id @default(autoincrement()) @map("id")
+  uuid            String    @unique @default(uuid()) @map("uuid") @db.Uuid
+  conversationId   Int       @map("conversation_id")
+  userId          Int       @map("user_id")
+  role            Int       @default(3) @map("role") // 1=admin, 2=moderator, 3=member
+  joinedAt        DateTime  @default(now()) @map("joined_at") @db.Timestamp(0)
+  lastReadAt      DateTime? @map("last_read_at") @db.Timestamp(0) // Last read message timestamp
+  lastReadMessageId Int?     @map("last_read_message_id") // Last message ID that was read
+  unreadCount     Int       @default(0) @map("unread_count") // Denormalized for quick access
+  isMuted         Boolean   @default(false) @map("is_muted")
+  leftAt          DateTime? @map("left_at") @db.Timestamp(0) // When user left (for group chats)
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamp(0) // Soft delete
+  version         Int       @default(1) @map("version") // Optimistic locking
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamp(0)
+  
+  // Relations
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user            User          @relation("ConversationParticipants", fields: [userId], references: [id], onDelete: Cascade)
+  lastReadMessage Message?      @relation("ParticipantLastReadMessage", fields: [lastReadMessageId], references: [id], onDelete: SetNull)
+  
+  @@unique([conversationId, userId])
+  @@index([conversationId])
+  @@index([userId])
+  @@index([role])
+  @@index([conversationId, lastReadAt])
+  @@index([userId, unreadCount(sort: Desc)]) // For quick unread count per user
+  @@index([deletedAt])
+  @@map("conversation_participants")
+}
+
+model Message {
+  id              Int       @id @default(autoincrement()) @map("id")
+  uuid            String    @unique @default(uuid()) @map("uuid") @db.Uuid
+  conversationId  Int       @map("conversation_id")
+  senderId        Int       @map("sender_id")
+  content         String?   @map("content") @db.Text // null if only media
+  messageType     Int       @default(1) @map("message_type") // 1=text, 2=image, 3=video, 4=audio, 5=file, 6=story_reply, 7=disappearing, 8=post_share, 9=clip_share, 10=profile_share, 11=hashtag_share, 12=location_share
+  mediaUrl        String?   @map("media_url") @db.VarChar(500)
+  mediaStorage    String?   @default("local") @map("media_storage") @db.VarChar(10) // "local" or "s3"
+  thumbnailUrl    String?   @map("thumbnail_url") @db.VarChar(500)
+  fileSize        Int?      @map("file_size") // bytes
+  fileName        String?   @map("file_name") @db.VarChar(255)
+  mimeType        String?   @map("mime_type") @db.VarChar(100)
+  replyToId       Int?      @map("reply_to_id") // Reply to another message
+  storyId         Int?      @map("story_id") // If replying to a story
+  
+  // Shared content IDs (for content sharing messages)
+  sharedPostId    Int?      @map("shared_post_id")
+  sharedClipId    Int?      @map("shared_clip_id")
+  sharedUserId    Int?      @map("shared_user_id")
+  sharedLocation  String?   @map("shared_location") @db.VarChar(255) // e.g., "lat,long" or "place_name"
+  
+  // Read status (Instagram-style: sent → delivered → read)
+  status          Int       @default(1) @map("status") // 1=sent, 2=delivered, 3=read
+  readAt          DateTime? @map("read_at") @db.Timestamp(0)
+  readByUserId    Int?      @map("read_by_user_id") // For direct messages only
+  
+  // Disappearing message
+  isDisappearing  Boolean   @default(false) @map("is_disappearing")
+  viewedAt       DateTime? @map("viewed_at") @db.Timestamp(0) // When recipient viewed (for disappearing)
+  expiresAt      DateTime? @map("expires_at") @db.Timestamp(0) // Auto-delete time
+  
+  // Message actions
+  isEdited        Boolean   @default(false) @map("is_edited")
+  editedAt        DateTime? @map("edited_at") @db.Timestamp(0)
+  isDeleted       Boolean   @default(false) @map("is_deleted")
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamp(0)
+  deletedForUserId Int?     @map("deleted_for_user_id") // User ID for "delete for me" (null = deleted for everyone)
+  version         Int       @default(1) @map("version") // Optimistic locking
+  
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamp(0)
+  
+  // Relations
+  conversation    Conversation @relation("ConversationMessages", fields: [conversationId], references: [id], onDelete: Cascade)
+  conversationAsLastMessage Conversation? @relation("ConversationLastMessage") // For Conversation.lastMessage relation
+  sender          User         @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  readBy          User?        @relation("MessageReadBy", fields: [readByUserId], references: [id], onDelete: SetNull)
+  replyTo         Message?     @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies         Message[]    @relation("MessageReplies")
+  participantLastRead ConversationParticipant[] @relation("ParticipantLastReadMessage") // For ConversationParticipant.lastReadMessage relation
+  story           Story?       @relation("StoryReplies", fields: [storyId], references: [id], onDelete: SetNull)
+  sharedPost      Post?        @relation("SharedPostMessages", fields: [sharedPostId], references: [id], onDelete: SetNull)
+  sharedClip      Post?        @relation("SharedClipMessages", fields: [sharedClipId], references: [id], onDelete: SetNull)
+  sharedUser      User?        @relation("SharedUserMessages", fields: [sharedUserId], references: [id], onDelete: SetNull)
+  reactions       MessageReaction[]
+  readReceipts    MessageReadReceipt[] // Only used for group messages (multiple readers)
+  
+  @@index([conversationId])
+  @@index([senderId])
+  @@index([readByUserId])
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@index([isDisappearing, expiresAt])
+  @@index([deletedAt])
+  @@index([sharedPostId])
+  @@index([sharedClipId])
+  @@index([sharedUserId])
+  @@index([uuid]) // UUID lookup
+  // Note: Full-text search can be implemented using PostgreSQL's native full-text search
+  // or a search service like Elasticsearch. Prisma doesn't support @@fulltext for PostgreSQL.
+  @@map("messages")
+}
+
+model MessageRequest {
+  id              Int       @id @default(autoincrement()) @map("id")
+  uuid            String    @unique @default(uuid()) @map("uuid") @db.Uuid
+  conversationId  Int       @unique @map("conversation_id") // One request per conversation
+  senderId        Int       @map("sender_id")
+  recipientId     Int       @map("recipient_id")
+  status          Int       @default(1) @map("status") // 1=pending, 2=accepted, 3=declined, 4=deleted
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamp(0)
+  
+  // Relations
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender          User         @relation("MessageRequestSender", fields: [senderId], references: [id], onDelete: Cascade)
+  recipient       User         @relation("MessageRequestRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  
+  @@index([senderId])
+  @@index([recipientId])
+  @@index([status])
+  @@index([recipientId, status])
+  @@map("message_requests")
+}
+
+model MessageReaction {
+  id              Int       @id @default(autoincrement()) @map("id")
+  uuid            String    @unique @default(uuid()) @map("uuid") @db.Uuid
+  messageId       Int       @map("message_id")
+  userId          Int       @map("user_id")
+  emoji           String    @map("emoji") @db.VarChar(10) // Unicode emoji (e.g., "❤️", "😂", "👍")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamp(0)
+  
+  // Relations
+  message         Message   @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user            User      @relation("MessageReactions", fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([messageId, userId]) // One reaction per user per message
+  @@index([messageId])
+  @@index([userId])
+  @@map("message_reactions")
+}
+
+model MessageReadReceipt {
+  id              Int       @id @default(autoincrement()) @map("id")
+  uuid            String    @unique @default(uuid()) @map("uuid") @db.Uuid
+  messageId       Int       @map("message_id")
+  userId          Int       @map("user_id")
+  readAt          DateTime  @default(now()) @map("read_at") @db.Timestamp(0)
+  
+  // Relations
+  message         Message   @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user            User      @relation("MessageReadReceipts", fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([messageId, userId])
+  @@index([messageId])
+  @@index([userId])
+  @@index([readAt])
+  @@map("message_read_receipts")
+}
