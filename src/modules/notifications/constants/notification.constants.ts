@@ -1,0 +1,21 @@
+/**
+ * Notification Constants
+ */
+
+export const NOTIFICATION_TYPE = {
+  MESSAGE: 1,
+  MESSAGE_REQUEST: 2,
+  REACTION: 3,
+  GROUP_INVITE: 4,
+  GROUP_UPDATE: 5,
+  INCOMING_CALL: 6,
+  MISSED_CALL: 7,
+  CALL_REJECTED: 8,
+};
+
+export const NOTIFICATION_STATUS = {
+  PENDING: 1,
+  SENT: 2,
+  DELIVERED: 3,
+  FAILED: 4,
+};
